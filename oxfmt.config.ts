@@ -1,3 +1,4 @@
+// oxfmt.config.ts
 import { defineConfig } from "oxfmt";
 import ultracite from "ultracite/oxfmt";
 
