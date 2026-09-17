@@ -71,7 +71,23 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 const SEED_PASSWORD = "password123";
 
-const users = new Map<string, User>();
+/**
+ * The store lives on `globalThis`, not in a module-level `const`.
+ *
+ * Next.js evaluates server code in more than one module registry (React Server
+ * Components and Route Handlers do not necessarily share one, and dev-mode HMR
+ * re-evaluates modules on edit). A plain module-level Map therefore gives you two
+ * or more *different* in-memory databases, and a write made from a Route Handler
+ * is invisible to a Server Component — which quietly breaks the revocation demo.
+ * The same pattern is why every Next.js + Prisma guide caches the client here.
+ */
+const globalStore = globalThis as typeof globalThis & {
+  __partnerPortalUsers?: Map<string, User>;
+};
+
+globalStore.__partnerPortalUsers ??= new Map<string, User>();
+
+const users = globalStore.__partnerPortalUsers;
 
 const documents: Document[] = [
   {
@@ -99,11 +115,13 @@ const documents: Document[] = [
  * app this is your connection pool; here it just guarantees the three seed users
  * exist before the first query.
  */
-let seeding: Promise<void> | null = null;
+const globalSeed = globalThis as typeof globalThis & {
+  __partnerPortalSeed?: Promise<void>;
+};
 
 function seed(): Promise<void> {
-  if (!seeding) {
-    seeding = (async () => {
+  if (!globalSeed.__partnerPortalSeed) {
+    globalSeed.__partnerPortalSeed = (async () => {
       const seeds: Array<{ id: string; email: string; role: Role }> = [
         { id: "u_member", email: "member@example.com", role: "member" },
         { id: "u_partner", email: "partner@example.com", role: "partner" },
@@ -119,7 +137,7 @@ function seed(): Promise<void> {
     })();
   }
 
-  return seeding;
+  return globalSeed.__partnerPortalSeed;
 }
 
 export async function findUserByEmail(email: string): Promise<User | null> {
