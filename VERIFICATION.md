@@ -483,3 +483,83 @@ runtime — the deprecation and the feature matrix point in opposite directions.
     `multipart/form-data` payload reaches the handler as something that is not a `FormData`
     (`TypeError: a.get is not a function`, HTTP 500). Drive it from a browser, or from the
     JS-less form fallback Next renders.
+
+## Browser E2E (agent-browser) — 2026-09-17
+
+Driven with `agent-browser` 0.30.1 (bundled **HeadlessChrome/149.0.0.0**, `navigator.userAgent`
+read in-session) against `npm run build && npx next start -p 3210`, except the revocation
+scenario, which needs `/api/dev/revoke` and therefore ran against `next dev -p 3211`. Download
+outcomes were observed over CDP in the same browser (`Browser.setDownloadBehavior`
+`{behavior:"allow", downloadPath:…, eventsEnabled:true}` plus `Browser.downloadWillBegin` /
+`downloadProgress`), because "what the browser did" is precisely the question and the CLI's
+`download` verb only reports success or failure.
+
+| #   | Scenario                                                            | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Signed out, open `/documents`                                       | Lands on `http://localhost:3210/login?next=%2Fdocuments` — path preserved, form rendered. ✅ ([shot](docs/screenshots/01-signed-out-redirect-to-login.png))                                                                                                                                                                                                                                                                                                                                                                |
+| 2   | Log in as `member@example.com` through the **form** (Server Action) | Redirected to `/documents`; the list holds exactly one entry, "Partner Programme Brochure". ✅ ([shot](docs/screenshots/02-member-documents.png))                                                                                                                                                                                                                                                                                                                                                                          |
+| 3   | Click the document's `<a download>`                                 | `Browser.downloadWillBegin` → `completed`; `public-brochure.txt` written to the download directory with the file's real contents. The filename came from `content-disposition`, the page did **not** navigate, nothing flashed on screen. ✅                                                                                                                                                                                                                                                                               |
+| 4   | As member, open `/documents/pricing/download` by hand               | `204`, no body. The browser did nothing at all: URL unchanged, no navigation, no download event, no file. The page stayed on `/documents`. ✅ Server log: `[dal] member@example.com (member) denied document pricing`.                                                                                                                                                                                                                                                                                                     |
+| 5   | What Chromium really does with `<a download>` on a refusal          | See below — the article's "a 403 body gets saved to disk" claim does **not** hold on Chromium 149. ⚠️                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 6   | "Request a fresh copy" (Server Action form)                         | Page re-renders with `Access request recorded: brochure`; server log `[actions] member@example.com requested access to "Partner Programme Brochure" (brochure)`; no error. ✅ ([shot](docs/screenshots/03-request-access-status.png))                                                                                                                                                                                                                                                                                      |
+| 7   | `/admin` as member, then as admin                                   | Member → `307` to `/documents`. After sign-out and login as `admin@example.com`, `/admin` renders "admin@example.com has the admin role." ✅ ([shot](docs/screenshots/04-admin-page.png), [admin's document list](docs/screenshots/05-admin-documents.png))                                                                                                                                                                                                                                                                |
+| 8   | As admin, download the admin-only document                          | `internal-audit.txt` downloaded, correct contents, no navigation. ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 9   | Revoke `u_member` while the browser holds a live session            | `POST /api/dev/revoke` → `{"deleted":true}`. The browser's next `/documents` navigation ends on `/login`, with the token still unexpired. ✅ ([shot](docs/screenshots/06-revoked-back-to-login.png)) Dev log, verbatim and in order: `[proxy] /documents passed the optimistic check for u_member` / `[dal] valid token for unknown user u_member — treating as signed out` / `GET /documents 307`. Note the redirect is to bare `/login`, without a `next` parameter: this bounce comes from the DAL, not from the proxy. |
+| 10  | Console on every page                                               | Production: console completely empty on `/`, `/login`, `/documents`, `/admin` — no errors, no hydration warnings. Dev: only `[Fast Refresh]`, `[HMR] connected` and React's "Download the React DevTools" info. ✅                                                                                                                                                                                                                                                                                                         |
+
+### Experiment 5 — what Chromium 149 does with an `<a download>` click
+
+Two throwaway `node:http` servers outside the repo, on `localhost:3301` (origin A) and
+`127.0.0.1:3302` (origin B, a different origin), served a page of anchors; each anchor was
+clicked from CDP with a download directory attached, and the directory, the download events and
+`location.href` were read after every click.
+
+| Case                                                                                           | Download event                                                                 | File on disk                                                                                                                               | Navigation                                  |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| (a) `403` + `text/plain` body, `<a download>`                                                  | `downloadWillBegin` (suggested name `f403.txt`) → `downloadProgress: canceled` | **none**                                                                                                                                   | no                                          |
+| (a′) same `403`, anchor carries `download="renamed-by-attr.txt"`                               | `downloadWillBegin` (`renamed-by-attr.txt`) → `canceled`                       | **none**                                                                                                                                   | no                                          |
+| (a″) same `403`, server adds `content-disposition: attachment; filename="denied.txt"`          | `downloadWillBegin` (`denied.txt`) → `canceled`                                | **none**                                                                                                                                   | no                                          |
+| (b) `204`, no body, `<a download>`                                                             | `downloadWillBegin` (`f204.txt`) → `canceled`                                  | none                                                                                                                                       | no                                          |
+| (c) `302` → same-origin `200` file (`content-disposition` attachment)                          | `downloadWillBegin` → `completed`                                              | `same-origin-server-name.txt`, contents `SAME-ORIGIN-FILE-CONTENT`                                                                         | no                                          |
+| (d) `302` → cross-origin `200` file URL on origin B (`content-disposition` attachment)         | `downloadWillBegin` → `completed`                                              | `cross-origin-server-name.txt` (the **server's** name, not the anchor's `download="cross-name.txt"`), contents `CROSS-ORIGIN-FILE-CONTENT` | no                                          |
+| (e) control: same-origin `200` with both `content-disposition` and `download="attr-wins.txt"`  | `completed`                                                                    | `same-origin-server-name.txt` — `content-disposition` wins over the attribute                                                              | no                                          |
+| (f) control: cross-origin `200` **without** `content-disposition`, `download="attr-cross.txt"` | no download event at all                                                       | none                                                                                                                                       | **yes** — the tab navigated to the file URL |
+| (g) control: the same `403` without a `download` attribute                                     | —                                                                              | none                                                                                                                                       | yes, the 403 body is displayed as a page    |
+
+Findings, precisely:
+
+1. **A `403` body is not saved to disk.** Chromium 149 starts the download and then interrupts
+   it (`state: "canceled"`) because the status is not `2xx`; the user gets a failed entry in the
+   downloads UI and nothing on disk. This held for all three `403` shapes tested, including one
+   the server explicitly marked `content-disposition: attachment`. The article's sentence
+   "a 403 body from an `<a download>` click gets saved to disk as the file" is wrong for current
+   Chromium and should be rewritten — the honest version is "the click produces a failed
+   download entry, which is noise the user has to interpret", which is still an argument for the
+   `204`, just a weaker one.
+2. **`204` and `403` are indistinguishable to the user in this flow.** Both end as a canceled
+   download with nothing saved; neither navigates.
+3. **A `302` is followed transparently**, same-origin and cross-origin alike; the file lands
+   with the redirect target's `content-disposition` name and correct contents, and the tab never
+   navigates.
+4. **The `download` attribute is honoured only same-origin, and only as a fallback.**
+   `content-disposition` beats it every time; cross-origin it is ignored outright, and if the
+   cross-origin response carries no `content-disposition` the click becomes an ordinary
+   navigation instead of a download (case f) — the standard cross-origin restriction on
+   `download`, confirmed here.
+
+All of the above was observed headless with the CDP download behaviour set to `allow`; a headful
+Chrome shows the same interruption as a red "Failed" row in the downloads shelf.
+
+### Two things worth knowing, found on the way
+
+- **Sign-out leaves a real browser on a JSON page.** `/documents` posts the sign-out form to
+  `POST /api/auth/logout`, which answers `NextResponse.json({ ok: true })`. Without JS in front
+  of it, the browser renders exactly that: the address bar reads
+  `http://localhost:3210/api/auth/logout` and the viewport reads `{"ok":true}`. The cookie _is_
+  cleared. A `303` back to `/login` would be the fix; the curl walkthrough in the README hides
+  this because curl never renders anything.
+  ([shot](docs/screenshots/07-signout-json-body.png))
+- **Tooling, not the app:** a long-lived `agent-browser` session silently stops dispatching
+  clicks — `click` still prints `✓ Done`, no request reaches the server, and no page handler
+  runs. `agent-browser close --all` followed by a fresh `open` restores it. Any click that
+  "does nothing" in this app is worth re-testing in a fresh session before it is believed.
