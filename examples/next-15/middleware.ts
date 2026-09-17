@@ -59,6 +59,16 @@ export async function middleware(request: NextRequest) {
     // Sliding session: a user who is actively browsing should not be logged out
     // mid-session. Re-issue while the current token is still valid, so the new
     // cookie replaces the old one on a request the user never notices.
+    //
+    // Two things this deliberately does NOT do, because it has no database here:
+    // 1. It copies `role` straight out of the old token, so a demotion never
+    //    reaches the claim. Harmless only because nothing reads that claim for
+    //    authorization — the DAL reads the role from the store on every call.
+    // 2. It re-issues for a user who was deleted or suspended a second ago, and
+    //    it has no absolute cap, so an active client can slide forever. The DAL
+    //    still refuses every one of those requests, so the extended token buys
+    //    the holder nothing; but in production you want a ceiling — carry the
+    //    original sign-in time as a claim and stop refreshing past it.
     if (shouldRefresh(expiresAt)) {
       const refreshed = await signSession(payload);
 
