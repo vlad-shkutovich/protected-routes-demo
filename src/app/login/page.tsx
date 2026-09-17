@@ -8,7 +8,7 @@ import { findUserByEmail, verifyPassword } from "@/lib/db";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/session";
 
 /** Exactly one leading slash: `//host` and `////host` are protocol-relative URLs. */
-const SINGLE_LEADING_SLASH = /^\/(?!\/)/;
+const SINGLE_LEADING_SLASH = /^\/(?!\/)/u;
 
 /** Any absolute origin works; it exists only so `new URL` has something to resolve against. */
 const PROBE_ORIGIN = "http://safe-next.invalid";
