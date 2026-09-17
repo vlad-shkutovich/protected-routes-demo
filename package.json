@@ -1,0 +1,28 @@
+{
+  "name": "protected-routes-demo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "ultracite check",
+    "lint:fix": "ultracite fix",
+    "format": "ultracite fix",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "oxfmt": "^0.49.0",
+    "oxlint": "^1.64.0",
+    "typescript": "^5",
+    "ultracite": "^7.7.0"
+  }
+}
