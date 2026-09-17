@@ -214,6 +214,27 @@ next=%2Fadmin                    -> location: /admin
 next=%2Fdocuments%3Fa%3D1        -> location: /documents?a=1
 ```
 
+A second round found that the origin check alone is still not enough: dot segments are resolved
+before the authority is parsed, so `/..//evil.example` stays on the probe origin and returns the
+pathname `//evil.example` — protocol-relative again.
+
+```
+next=%2F..%2F%2Fevil.com  -> location: //evil.com     <-- before the second fix
+next=%2F.%2F%2Fevil.com   -> location: //evil.com
+```
+
+The final check also demands exactly one leading slash on the string that goes into the
+`Location` header:
+
+```
+next=%2F..%2F%2Fevil.com  -> location: /documents
+next=%2F.%2F%2Fevil.com   -> location: /documents
+next=%2F%2Fevil.com       -> location: /documents
+next=%2F%5Cevil.com       -> location: /documents
+next=%2Fadmin             -> location: /admin
+next=%2Fdocuments%3Fa%3D1 -> location: /documents?a=1
+```
+
 PASS.
 
 ### i3. Login timing is the same for an unknown email and a wrong password

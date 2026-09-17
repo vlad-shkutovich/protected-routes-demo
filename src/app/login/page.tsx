@@ -7,6 +7,9 @@ import { getSession } from "@/lib/dal";
 import { findUserByEmail, verifyPassword } from "@/lib/db";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/session";
 
+/** Exactly one leading slash: `//host` and `////host` are protocol-relative URLs. */
+const SINGLE_LEADING_SLASH = /^\/(?!\/)/;
+
 /** Any absolute origin works; it exists only so `new URL` has something to resolve against. */
 const PROBE_ORIGIN = "http://safe-next.invalid";
 
@@ -35,7 +38,18 @@ function safeNext(value: string | undefined): string {
     return "/documents";
   }
 
-  return `${resolved.pathname}${resolved.search}`;
+  const target = `${resolved.pathname}${resolved.search}`;
+
+  // The origin check alone is not the end of it. Dot segments are resolved BEFORE
+  // the authority is parsed, so `/..//evil.example` stays on the probe origin and
+  // still comes back with the pathname `//evil.example` — which, handed to
+  // `redirect()`, is a protocol-relative URL again. Demand exactly one leading
+  // slash on the value that actually goes into the Location header.
+  if (!SINGLE_LEADING_SLASH.test(target)) {
+    return "/documents";
+  }
+
+  return target;
 }
 
 async function login(formData: FormData) {
