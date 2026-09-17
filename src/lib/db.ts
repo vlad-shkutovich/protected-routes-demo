@@ -18,6 +18,12 @@ const scrypt = promisify(scryptCallback) as (
 
 const SCRYPT_KEYLEN = 64;
 
+/**
+ * A fixed, well-formed hash of a value nothing can guess. Used only to give the
+ * "unknown email" branch the same cost as the "wrong password" branch.
+ */
+const DUMMY_HASH = `${"00".repeat(16)}:${"00".repeat(SCRYPT_KEYLEN)}`;
+
 export type User = {
   id: string;
   email: string;
@@ -42,8 +48,14 @@ export async function hashPassword(password: string): Promise<string> {
   return `${salt.toString("hex")}:${derived.toString("hex")}`;
 }
 
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, keyHex] = stored.split(":");
+/**
+ * `stored` is nullable on purpose: the login routes call this even when no user
+ * matched, passing `null`. Returning early for an unknown email would make the
+ * response measurably faster than a wrong password and turn the timing into an
+ * account-enumeration oracle, so an unknown email still pays for one scrypt run.
+ */
+export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
+  const [saltHex, keyHex] = (stored ?? DUMMY_HASH).split(":");
 
   if (!(saltHex && keyHex)) {
     // A malformed hash is a data bug, not a wrong password — say so in the log.
@@ -66,7 +78,10 @@ export async function verifyPassword(password: string, stored: string): Promise<
     return false;
   }
 
-  return timingSafeEqual(expected, derived);
+  // Constant-time: a byte-by-byte `===` leaks how much of the hash matched.
+  const matches = timingSafeEqual(expected, derived);
+
+  return stored !== null && matches;
 }
 
 const SEED_PASSWORD = "password123";

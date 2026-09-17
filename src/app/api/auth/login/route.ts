@@ -47,9 +47,10 @@ export async function POST(request: NextRequest) {
 
   const user = await findUserByEmail(body.email);
 
-  // Same response for "no such user" and "wrong password": anything else turns the
-  // login endpoint into an account-enumeration oracle.
-  const ok = user ? await verifyPassword(body.password, user.passwordHash) : false;
+  // Same response AND the same cost for "no such user" and "wrong password":
+  // anything else turns the login endpoint into an account-enumeration oracle.
+  // `verifyPassword` runs scrypt even for a null hash — see src/lib/db.ts.
+  const ok = await verifyPassword(body.password, user?.passwordHash ?? null);
 
   if (!(user && ok)) {
     return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
