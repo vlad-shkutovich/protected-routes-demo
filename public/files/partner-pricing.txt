@@ -1,0 +1,3 @@
+Partner Portal — 2026 Partner Pricing Sheet
+===========================================
+Confidential. Requires the `partner` role (admins inherit access).
