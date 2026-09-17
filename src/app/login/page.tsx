@@ -3,9 +3,8 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { signIn } from "@/lib/auth";
 import { getSession } from "@/lib/dal";
-import { findUserByEmail, verifyPassword } from "@/lib/db";
-import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/session";
 
 /** Exactly one leading slash: `//host` and `////host` are protocol-relative URLs. */
 const SINGLE_LEADING_SLASH = /^\/(?!\/)/u;
@@ -63,27 +62,17 @@ async function login(formData: FormData) {
     redirect(`/login?next=${encodeURIComponent(next)}&error=1`);
   }
 
-  const user = await findUserByEmail(email);
-  // Null hash for an unknown email, so the timing does not answer "does this
-  // account exist?" — see the note on `verifyPassword` in src/lib/db.ts.
-  const ok = await verifyPassword(password, user?.passwordHash ?? null);
+  // Same sign-in path as /api/auth/login — see src/lib/auth.ts.
+  const result = await signIn(email, password);
 
-  if (!(user && ok)) {
+  if (!result) {
     console.warn(`[login] failed sign-in attempt for ${email}`);
     redirect(`/login?next=${encodeURIComponent(next)}&error=1`);
   }
 
   const cookieStore = await cookies();
 
-  cookieStore.set({
-    name: SESSION_COOKIE,
-    value: await signSession({ sub: user.id, role: user.role }),
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS,
-  });
+  cookieStore.set(result.cookie);
 
   redirect(next);
 }
