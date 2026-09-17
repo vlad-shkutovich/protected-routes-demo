@@ -73,23 +73,22 @@ export function sessionCookie(value: string, maxAge = SESSION_TTL_SECONDS): Sess
  * Returns a 403 response when the request looks cross-site, `null` when it is fine.
  */
 export function assertSameOrigin(request: NextRequest): NextResponse | null {
-  // Sent by every current browser, and more precise than Origin: `none` is a
-  // direct navigation, `same-origin` a request the page made to itself.
   const site = request.headers.get("sec-fetch-site");
-
-  if (site === "same-origin" || site === "none") {
-    return null;
-  }
-
   const origin = request.headers.get("origin");
 
-  // No Origin at all: curl, a server-to-server call, an old browser. Nothing to
-  // compare, and no ambient cookie risk from a form post that has no browser.
-  if (origin === null || origin === request.nextUrl.origin) {
+  // `none` is a direct navigation, `same-origin` a request the page made to itself.
+  // Neither header at all means no browser made this request — curl or a
+  // server-to-server call, with no ambient cookie for an attacker to ride on.
+  const trusted =
+    site === "same-origin" ||
+    site === "none" ||
+    (origin === null ? site === null : origin === request.nextUrl.origin);
+
+  if (trusted) {
     return null;
   }
 
-  console.warn(`[auth] cross-origin request from ${origin} rejected`);
+  console.warn(`[auth] cross-site request rejected (origin=${origin}, site=${site})`);
 
   return NextResponse.json({ error: "cross-origin request rejected" }, { status: 403 });
 }
