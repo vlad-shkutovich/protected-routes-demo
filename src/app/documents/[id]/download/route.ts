@@ -1,19 +1,25 @@
 // src/app/documents/[id]/download/route.ts
-import type { NextRequest } from "next/server";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { NextResponse } from "next/server";
 
 import { getDocumentForCurrentUser } from "@/lib/dal";
 
+// The files live in content/, not public/: anything under public/ is served as a
+// static asset by path, with no session in sight, so a "protected" file there is
+// one guessed URL away from everyone. This handler is the only way to read them.
+const FILES_DIR = path.join(process.cwd(), "content", "files");
+
 export async function GET(
-  request: NextRequest,
+  _request: Request,
   // `params` is a Promise in Next.js 15+.
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
   // Authorization happens here, through the DAL, not in the proxy. The proxy only
-  // knows there is a token; it does not know which documents this user may read,
-  // and it never will without a database round trip it should not be making.
+  // knows there is a token; it does not know which documents this user may read.
   const doc = await getDocumentForCurrentUser(id);
 
   if (!doc) {
@@ -24,10 +30,14 @@ export async function GET(
     return new NextResponse(null, { status: 204 });
   }
 
-  // Absolute, same-origin Location. A relative Location, or one pointing at a CDN
-  // on another origin, makes the browser drop the `download` attribute and open
-  // the file in a tab instead of saving it.
-  const target = new URL(`/files/${doc.fileName}`, request.nextUrl.origin);
+  const bytes = await readFile(path.join(FILES_DIR, doc.fileName));
 
-  return NextResponse.redirect(target, 302);
+  return new NextResponse(bytes, {
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      // The filename the browser saves under; without it the anchor's URL wins
+      // and the file lands on disk called "download".
+      "content-disposition": `attachment; filename="${doc.fileName}"`,
+    },
+  });
 }
