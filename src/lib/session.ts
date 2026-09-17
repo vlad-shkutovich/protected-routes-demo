@@ -15,7 +15,26 @@ export const SESSION_AUDIENCE = "partner-portal";
  * behaviour can be exercised locally (see VERIFICATION.md, check j) without
  * waiting 50 minutes for a real token to approach its expiry.
  */
-export const SESSION_TTL_SECONDS = Number.parseInt(process.env.SESSION_TTL_SECONDS ?? "3600", 10);
+export const SESSION_TTL_SECONDS = readTtlSeconds();
+
+function readTtlSeconds(): number {
+  const raw = process.env.SESSION_TTL_SECONDS;
+
+  if (raw === undefined) {
+    return 3600;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  // `Number.parseInt("nonsense")` is NaN, and a NaN TTL produces a token with an
+  // invalid `exp` and a cookie with no Max-Age — a silently broken session rather
+  // than a loud misconfiguration. Fail at boot instead.
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`SESSION_TTL_SECONDS must be a positive integer, got ${JSON.stringify(raw)}.`);
+  }
+
+  return parsed;
+}
 
 /** Re-issue the token when it has less than this many seconds left. */
 export const SESSION_REFRESH_THRESHOLD_SECONDS = 10 * 60;
