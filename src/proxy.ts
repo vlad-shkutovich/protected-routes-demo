@@ -34,6 +34,11 @@ export async function proxy(request: NextRequest) {
 
   try {
     const { payload, expiresAt } = await verifySession(token);
+
+    // The token verified — that is ALL this proves. The account behind `sub` may
+    // have been deleted a second ago and this check would not notice.
+    console.info(`[proxy] ${pathname} passed the optimistic check for ${payload.sub}`);
+
     const response = NextResponse.next();
 
     // Sliding session: a user who is actively browsing should not be logged out
