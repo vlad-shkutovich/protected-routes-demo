@@ -1,4 +1,5 @@
 // src/lib/db.ts
+import "server-only";
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
@@ -10,24 +11,56 @@ import type { Role } from "@/lib/session";
  * exactly why you would never do this in production.
  */
 
+type ScryptParams = { N: number; r: number; p: number };
+
 const scrypt = promisify(scryptCallback) as (
   password: string,
   salt: Buffer,
   keylen: number,
+  options: ScryptParams & { maxmem: number },
 ) => Promise<Buffer>;
 
 const SCRYPT_KEYLEN = 64;
 
 /**
- * A fixed, well-formed hash of a value nothing can guess. Used only to give the
- * "unknown email" branch the same cost as the "wrong password" branch.
+ * Cost parameters for new hashes. They are stored alongside every hash, so raising
+ * them later does not invalidate the records written with the old ones.
+ * scrypt needs roughly `128 * N * r` bytes: 128 MiB here, above Node's 32 MiB
+ * default, so `maxmem` has to be raised or the call throws.
  */
-const DUMMY_HASH = `${"00".repeat(16)}:${"00".repeat(SCRYPT_KEYLEN)}`;
+const SCRYPT_PARAMS: ScryptParams = { N: 2 ** 17, r: 8, p: 1 };
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+
+/** A well-formed record for a value nothing can guess, so the "unknown email" branch costs the same. */
+const DUMMY_HASH = formatHash(SCRYPT_PARAMS, Buffer.alloc(16), Buffer.alloc(SCRYPT_KEYLEN));
+
+function formatHash(params: ScryptParams, salt: Buffer, derived: Buffer): string {
+  return `scrypt$${params.N}$${params.r}$${params.p}$${salt.toString("hex")}$${derived.toString("hex")}`;
+}
+
+/** `scrypt$N$r$p$<salt hex>$<key hex>` — the verifier reads the cost out of the record. */
+function parseHash(
+  stored: string,
+): { params: ScryptParams; salt: Buffer; expected: Buffer } | null {
+  const [scheme, n, r, p, saltHex, keyHex] = stored.split("$");
+
+  if (scheme !== "scrypt" || !(n && r && p && saltHex && keyHex)) {
+    return null;
+  }
+
+  const params = { N: Number(n), r: Number(r), p: Number(p) };
+
+  if (!Object.values(params).every((value) => Number.isInteger(value) && value > 0)) {
+    return null;
+  }
+
+  return { params, salt: Buffer.from(saltHex, "hex"), expected: Buffer.from(keyHex, "hex") };
+}
 
 export type User = {
   id: string;
   email: string;
-  /** `<salt hex>:<derived key hex>`. Never leaves this module. */
+  /** Never leaves this module. */
   passwordHash: string;
   role: Role;
 };
@@ -37,27 +70,30 @@ export type Document = {
   title: string;
   /** Minimum role needed to see and download this document. */
   requiredRole: Role;
-  /** Path under `public/`, served statically once access has been granted. */
+  /** File under `content/files/`, outside `public/` so only the download route can serve it. */
   fileName: string;
 };
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const derived = await scrypt(password, salt, SCRYPT_KEYLEN);
+  const derived = await scrypt(password, salt, SCRYPT_KEYLEN, {
+    ...SCRYPT_PARAMS,
+    maxmem: SCRYPT_MAXMEM,
+  });
 
-  return `${salt.toString("hex")}:${derived.toString("hex")}`;
+  return formatHash(SCRYPT_PARAMS, salt, derived);
 }
 
 /**
- * `stored` is nullable on purpose: the login routes call this even when no user
+ * `stored` is nullable on purpose: the login paths call this even when no user
  * matched, passing `null`. Returning early for an unknown email would make the
  * response measurably faster than a wrong password and turn the timing into an
  * account-enumeration oracle, so an unknown email still pays for one scrypt run.
  */
 export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
-  const [saltHex, keyHex] = (stored ?? DUMMY_HASH).split(":");
+  const record = parseHash(stored ?? DUMMY_HASH);
 
-  if (!(saltHex && keyHex)) {
+  if (!record) {
     // A malformed hash is a data bug, not a wrong password — say so in the log.
     console.error("[db] stored password hash is malformed");
     return false;
@@ -66,22 +102,21 @@ export async function verifyPassword(password: string, stored: string | null): P
   let derived: Buffer;
 
   try {
-    derived = await scrypt(password, Buffer.from(saltHex, "hex"), SCRYPT_KEYLEN);
+    derived = await scrypt(password, record.salt, record.expected.length, {
+      ...record.params,
+      maxmem: SCRYPT_MAXMEM,
+    });
   } catch (error) {
     console.error("[db] scrypt failed while verifying a password:", error);
     return false;
   }
 
-  const expected = Buffer.from(keyHex, "hex");
-
-  if (expected.length !== derived.length) {
+  if (record.expected.length !== derived.length) {
     return false;
   }
 
   // Constant-time: a byte-by-byte `===` leaks how much of the hash matched.
-  const matches = timingSafeEqual(expected, derived);
-
-  return stored !== null && matches;
+  return timingSafeEqual(record.expected, derived);
 }
 
 const SEED_PASSWORD = "password123";
@@ -89,12 +124,11 @@ const SEED_PASSWORD = "password123";
 /**
  * The store lives on `globalThis`, not in a module-level `const`.
  *
- * Next.js evaluates server code in more than one module registry (React Server
- * Components and Route Handlers do not necessarily share one, and dev-mode HMR
- * re-evaluates modules on edit). A plain module-level Map therefore gives you two
- * or more *different* in-memory databases, and a write made from a Route Handler
- * is invisible to a Server Component — which quietly breaks the revocation demo.
- * The same pattern is why every Next.js + Prisma guide caches the client here.
+ * In dev, module state written from a Route Handler turned out not to be visible
+ * to a Server Component — a plain module-level Map gave two different in-memory
+ * databases and quietly broke the revocation demo (VERIFICATION.md, gotcha 1).
+ * `globalThis` is one object per process, so both paths see the same store. It is
+ * the same reason every Next.js + Prisma guide caches its client here.
  */
 const globalStore = globalThis as typeof globalThis & {
   __partnerPortalUsers?: Map<string, User>;
