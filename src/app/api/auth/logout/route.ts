@@ -11,7 +11,14 @@ export function POST(request: NextRequest) {
     return crossOrigin;
   }
 
-  const response = NextResponse.json({ ok: true });
+  // The plain HTML logout form has no JS to intercept the response, so a real
+  // browser ends up rendering whatever this route returns. A JSON client can
+  // still ask for the old body via `Accept: application/json`.
+  const wantsJson = request.headers.get("accept")?.includes("application/json") ?? false;
+
+  const response = wantsJson
+    ? NextResponse.json({ ok: true })
+    : NextResponse.redirect(new URL("/login", request.nextUrl.origin), 303);
 
   // Overwrite with an empty, immediately-expiring cookie carrying the same
   // attributes the login path used (src/lib/auth.ts).

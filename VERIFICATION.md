@@ -559,6 +559,12 @@ Chrome shows the same interruption as a red "Failed" row in the downloads shelf.
   cleared. A `303` back to `/login` would be the fix; the curl walkthrough in the README hides
   this because curl never renders anything.
   ([shot](docs/screenshots/07-signout-json-body.png))
+  - **Follow-up (2026-09-17):** fixed. `POST /api/auth/logout` now clears the cookie and
+    answers `303` to `/login` (built from `request.nextUrl.origin`) for a normal form
+    submission, and still returns the old `{ ok: true }` JSON body when the caller sends
+    `Accept: application/json`. Verified with curl: a browser-like POST gets
+    `303` + `location: http://localhost:3000/login` + `set-cookie: session=; ... Max-Age=0`;
+    the same request with `Accept: application/json` gets `200` and `{"ok":true}`.
 - **Tooling, not the app:** a long-lived `agent-browser` session silently stops dispatching
   clicks — `click` still prints `✓ Done`, no request reaches the server, and no page handler
   runs. `agent-browser close --all` followed by a fresh `open` restores it. Any click that
