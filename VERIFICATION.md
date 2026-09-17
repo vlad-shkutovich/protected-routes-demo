@@ -192,6 +192,42 @@ PASS, and this is the whole argument: the proxy let the request through _after_ 
 deleted, because the token is still cryptographically valid. Only the DAL, which touches the
 store, could tell. `GET /api/me` with the same cookie returns `401` for the same reason.
 
+### i2. Open redirect in the `next` parameter
+
+`src/app/login/page.tsx` validates `?next=` before redirecting. The first version only checked
+`startsWith("/")` and `!startsWith("//")`, which is **not** enough: the WHATWG URL parser treats
+a backslash as a slash, so `/\evil.example` resolves to `http://evil.example/`. Reproduced
+before the fix, signed in, on `/login?next=%2F%5Cevil.example`:
+
+```
+HTTP/1.1 307 Temporary Redirect
+location: /\evil.example          <-- the browser navigates off-site
+```
+
+After resolving the value against a probe origin and comparing origins:
+
+```
+next=%2F%5Cevil.example          -> location: /documents
+next=%2F%2Fevil.example          -> location: /documents
+next=https%3A%2F%2Fevil.example  -> location: /documents
+next=%2Fadmin                    -> location: /admin
+next=%2Fdocuments%3Fa%3D1        -> location: /documents?a=1
+```
+
+PASS.
+
+### i3. Login timing is the same for an unknown email and a wrong password
+
+`verifyPassword` takes `string | null` and runs scrypt against a dummy hash when no user
+matched, so the response time does not answer "does this account exist?".
+
+```
+unknown-user 401 0.025025s
+wrong-pass   401 0.025370s
+```
+
+PASS.
+
 ### j. Sliding session
 
 Started the dev server with `SESSION_TTL_SECONDS=300`, so every freshly issued token sits below
