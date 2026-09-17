@@ -1,18 +1,41 @@
-import { cookies } from "next/headers";
 // src/app/login/page.tsx
+
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getSession } from "@/lib/dal";
 import { findUserByEmail, verifyPassword } from "@/lib/db";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/session";
 
-/** Only ever redirect to a path on this origin — `next=https://evil.example` is an open redirect. */
+/** Any absolute origin works; it exists only so `new URL` has something to resolve against. */
+const PROBE_ORIGIN = "http://safe-next.invalid";
+
+/**
+ * Only ever redirect to a path on THIS origin. `startsWith("/")` is not enough:
+ * the URL parser treats a backslash as a slash, so `/\evil.example` is a
+ * protocol-relative URL in disguise and the browser navigates off-site. Resolving
+ * the value against a throwaway origin and comparing origins is the check that
+ * survives `//host`, `/\host`, `https:evil`, and stray control characters.
+ */
 function safeNext(value: string | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+  if (!value || !value.startsWith("/")) {
     return "/documents";
   }
 
-  return value;
+  let resolved: URL;
+
+  try {
+    resolved = new URL(value, PROBE_ORIGIN);
+  } catch {
+    // `new URL` only throws here on input the parser cannot make sense of at all.
+    return "/documents";
+  }
+
+  if (resolved.origin !== PROBE_ORIGIN) {
+    return "/documents";
+  }
+
+  return `${resolved.pathname}${resolved.search}`;
 }
 
 async function login(formData: FormData) {
@@ -27,7 +50,9 @@ async function login(formData: FormData) {
   }
 
   const user = await findUserByEmail(email);
-  const ok = user ? await verifyPassword(password, user.passwordHash) : false;
+  // Null hash for an unknown email, so the timing does not answer "does this
+  // account exist?" — see the note on `verifyPassword` in src/lib/db.ts.
+  const ok = await verifyPassword(password, user?.passwordHash ?? null);
 
   if (!(user && ok)) {
     console.warn(`[login] failed sign-in attempt for ${email}`);
