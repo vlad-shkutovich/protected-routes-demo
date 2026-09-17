@@ -10,6 +10,7 @@ import {
   signSession,
   verifySession,
 } from "@/lib/session";
+import type { VerifiedSession } from "@/lib/session";
 
 /**
  * Next.js 16's renamed middleware. An OPTIMISTIC check and nothing more: it bounces
@@ -28,7 +29,7 @@ export async function proxy(request: NextRequest) {
     return reject(request, isApiRequest, "no session cookie");
   }
 
-  let session: Awaited<ReturnType<typeof verifySession>>;
+  let session: VerifiedSession;
 
   try {
     session = await verifySession(token);

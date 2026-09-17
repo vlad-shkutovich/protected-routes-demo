@@ -10,6 +10,7 @@ import {
   signSession,
   verifySession,
 } from "@/lib/session";
+import type { VerifiedSession } from "@/lib/session";
 
 /**
  * The same logic as src/proxy.ts, written against the Next.js 15 convention
@@ -29,7 +30,7 @@ export async function middleware(request: NextRequest) {
     return reject(request, isApiRequest, "no session cookie");
   }
 
-  let session: Awaited<ReturnType<typeof verifySession>>;
+  let session: VerifiedSession;
 
   try {
     session = await verifySession(token);
