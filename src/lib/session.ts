@@ -1,6 +1,6 @@
 // src/lib/session.ts
 import type { JWTVerifyResult } from "jose";
-import { createRemoteJWKSet, errors as joseErrors, jwtVerify, SignJWT } from "jose";
+import { errors as joseErrors, jwtVerify, SignJWT } from "jose";
 
 /**
  * Session constants. `iss` and `aud` are pinned so a token minted for another
@@ -11,40 +11,43 @@ export const SESSION_ISSUER = "https://partner-portal.example.com";
 export const SESSION_AUDIENCE = "partner-portal";
 
 /**
- * Token lifetime. Overridable through SESSION_TTL_SECONDS so the sliding-session
- * behaviour can be exercised locally (see VERIFICATION.md, check j) without
- * waiting 50 minutes for a real token to approach its expiry.
+ * Token lifetime, and the ceiling the sliding re-issue may not push past.
+ * Both are overridable so the behaviour can be exercised locally (see
+ * VERIFICATION.md, check j) without waiting out a real token.
  */
-export const SESSION_TTL_SECONDS = readTtlSeconds();
+export const SESSION_TTL_SECONDS = readPositiveInt("SESSION_TTL_SECONDS", 3600);
+export const MAX_SESSION_SECONDS = readPositiveInt("MAX_SESSION_SECONDS", 8 * 60 * 60);
 
-function readTtlSeconds(): number {
-  const raw = process.env.SESSION_TTL_SECONDS;
+/** Re-issue the token when it has less than this many seconds left. */
+export const SESSION_REFRESH_THRESHOLD_SECONDS = 10 * 60;
+
+function readPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
 
   if (raw === undefined) {
-    return 3600;
+    return fallback;
   }
 
   const parsed = Number.parseInt(raw, 10);
 
-  // `Number.parseInt("nonsense")` is NaN, and a NaN TTL produces a token with an
-  // invalid `exp` and a cookie with no Max-Age — a silently broken session rather
-  // than a loud misconfiguration. Fail at boot instead.
+  // A NaN TTL produces a token with an invalid `exp` and a cookie with no Max-Age —
+  // a silently broken session rather than a loud misconfiguration. Fail at boot.
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`SESSION_TTL_SECONDS must be a positive integer, got ${JSON.stringify(raw)}.`);
+    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}.`);
   }
 
   return parsed;
 }
-
-/** Re-issue the token when it has less than this many seconds left. */
-export const SESSION_REFRESH_THRESHOLD_SECONDS = 10 * 60;
 
 export const ROLES = ["member", "partner", "admin"] as const;
 export type Role = (typeof ROLES)[number];
 
 export type SessionPayload = {
   sub: string;
+  /** A hint for the UI only. Authorization always reads the role from the store. */
   role: Role;
+  /** Unix seconds of the original sign-in. Survives every re-issue; caps the sliding session. */
+  authTime: number;
 };
 
 /** Thrown by `verifySession` for every failure mode. Callers fail closed on it. */
@@ -64,6 +67,9 @@ export class SessionError extends Error {
  * Fail fast at module load rather than at the first request: a missing or weak
  * secret is a deployment mistake, and an app that boots with one is an app that
  * silently issues forgeable sessions.
+ *
+ * HS256 needs at least 32 BYTES of key material, which is not the same as 32
+ * characters: a 32-char hex string carries only 16 bytes, so hex is decoded first.
  */
 function readSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -74,13 +80,17 @@ function readSecret(): Uint8Array {
     );
   }
 
-  if (secret.length < 32) {
+  const bytes = /^[0-9a-f]+$/iu.test(secret)
+    ? Uint8Array.from(Buffer.from(secret, "hex"))
+    : new TextEncoder().encode(secret);
+
+  if (bytes.length < 32) {
     throw new Error(
-      `JWT_SECRET is too short (${secret.length} chars). HS256 needs at least 32 characters of entropy.`,
+      `JWT_SECRET is too weak (${bytes.length} bytes of key material). HS256 needs at least 32; run: openssl rand -hex 32`,
     );
   }
 
-  return new TextEncoder().encode(secret);
+  return bytes;
 }
 
 const secretKey = readSecret();
@@ -91,7 +101,7 @@ function isRole(value: unknown): value is Role {
 }
 
 function narrowPayload(claims: Record<string, unknown>): SessionPayload {
-  const { sub, role } = claims;
+  const { sub, role, authTime } = claims;
 
   if (typeof sub !== "string" || sub.length === 0) {
     throw new SessionError("payload.sub is missing or not a string");
@@ -101,12 +111,16 @@ function narrowPayload(claims: Record<string, unknown>): SessionPayload {
     throw new SessionError(`payload.role is not a known role (got ${JSON.stringify(role)})`);
   }
 
-  // Note the absence of a cast: `sub` and `role` are narrowed by the checks above.
-  return { sub, role };
+  if (typeof authTime !== "number" || !Number.isFinite(authTime)) {
+    throw new SessionError("payload.authTime is missing or not a number");
+  }
+
+  // Note the absence of a cast: every field is narrowed by the checks above.
+  return { sub, role, authTime };
 }
 
 export async function signSession(payload: SessionPayload): Promise<string> {
-  return await new SignJWT({ role: payload.role })
+  return await new SignJWT({ role: payload.role, authTime: payload.authTime })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(payload.sub)
     .setIssuer(SESSION_ISSUER)
@@ -133,9 +147,11 @@ export async function verifySession(token: string): Promise<VerifiedSession> {
   try {
     result = await jwtVerify(token, secretKey, {
       algorithms: ["HS256"], // pin the alg: never let the token's header choose it
+      typ: "JWT",
       issuer: SESSION_ISSUER,
       audience: SESSION_AUDIENCE,
       requiredClaims: ["exp", "iat", "sub"],
+      clockTolerance: "5s", // two servers are never quite agreed on the time
     });
   } catch (error) {
     if (error instanceof joseErrors.JOSEError) {
@@ -155,54 +171,18 @@ export async function verifySession(token: string): Promise<VerifiedSession> {
   return { payload: narrowPayload(result.payload), expiresAt: exp };
 }
 
-/** True when the token is close enough to expiry that it should be re-issued. */
-export function shouldRefresh(expiresAt: number, now = Date.now()): boolean {
-  return expiresAt - Math.floor(now / 1000) < SESSION_REFRESH_THRESHOLD_SECONDS;
-}
-
 /**
- * RS256 + JWKS alternative. Exported for the article, unused by this demo.
- *
- * Use this shape when an EXTERNAL identity provider (Auth0, Okta, Entra, Cognito,
- * Keycloak) issues the token: you only ever verify, you never sign, so the app
- * holds a public key and the IdP can rotate its signing key without a redeploy —
- * `createRemoteJWKSet` re-fetches and caches the key set by `kid`.
- *
- * Use the HS256 path above when you issue AND verify the token yourself, as this
- * demo does: a shared symmetric secret is simpler, and there is no third party
- * that would need the public half. HS256 stops being appropriate the moment a
- * second service needs to verify, because sharing the secret means sharing the
- * ability to mint tokens.
+ * True when the token is close to expiry AND the session has not yet run out its
+ * absolute life. Without the second half an active client slides forever: every
+ * re-issue would push the expiry out again, and a stolen cookie in an open tab
+ * would never age out.
  */
-const remoteJwks = createRemoteJWKSet(
-  new URL(process.env.OIDC_JWKS_URL ?? "https://idp.example.com/.well-known/jwks.json"),
-);
+export function shouldRefresh(session: VerifiedSession, now = Date.now()): boolean {
+  const nowSeconds = Math.floor(now / 1000);
 
-export async function verifySessionWithJwks(token: string): Promise<VerifiedSession> {
-  try {
-    const { payload } = await jwtVerify(token, remoteJwks, {
-      algorithms: ["RS256"],
-      issuer: SESSION_ISSUER,
-      audience: SESSION_AUDIENCE,
-      requiredClaims: ["exp", "sub"],
-    });
-
-    const exp = payload.exp;
-
-    if (typeof exp !== "number") {
-      throw new SessionError("payload.exp is missing after verification");
-    }
-
-    return { payload: narrowPayload(payload), expiresAt: exp };
-  } catch (error) {
-    if (error instanceof SessionError) {
-      throw error;
-    }
-
-    if (error instanceof joseErrors.JOSEError) {
-      throw new SessionError(`${error.constructor.name} (${error.code})`, error);
-    }
-
-    throw new SessionError("unexpected JWKS verification failure", error);
+  if (nowSeconds > session.payload.authTime + MAX_SESSION_SECONDS) {
+    return false;
   }
+
+  return session.expiresAt - nowSeconds < SESSION_REFRESH_THRESHOLD_SECONDS;
 }
