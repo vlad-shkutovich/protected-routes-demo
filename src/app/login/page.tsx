@@ -41,7 +41,7 @@ function safeNext(value: string | undefined): string {
 
   // The origin check alone is not the end of it. Dot segments are resolved BEFORE
   // the authority is parsed, so `/..//evil.example` stays on the probe origin and
-  // still comes back with the pathname `//evil.example` — which, handed to
+  // still comes back with the pathname `//evil.example`, which, handed to
   // `redirect()`, is a protocol-relative URL again. Demand exactly one leading
   // slash on the value that actually goes into the Location header.
   if (!SINGLE_LEADING_SLASH.test(target)) {
@@ -62,7 +62,7 @@ async function login(formData: FormData) {
     redirect(`/login?next=${encodeURIComponent(next)}&error=1`);
   }
 
-  // Same sign-in path as /api/auth/login — see src/lib/auth.ts.
+  // Same sign-in path as /api/auth/login: see src/lib/auth.ts.
   const result = await signIn(email, password);
 
   if (!result) {
@@ -108,7 +108,7 @@ export default async function LoginPage({
         <button type="submit">Sign in</button>
       </form>
       <p>
-        Seeded accounts: member@example.com, partner@example.com, admin@example.com — password{" "}
+        Seeded accounts: member@example.com, partner@example.com, admin@example.com, password{" "}
         <code>password123</code>.
       </p>
     </main>

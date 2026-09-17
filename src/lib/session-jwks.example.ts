@@ -9,7 +9,7 @@ import { SessionError } from "@/lib/session";
  *
  * Use this shape when an EXTERNAL identity provider (Auth0, Okta, Entra, Cognito,
  * Keycloak) issues the token: you only ever verify, never sign, so the app holds a
- * public key and the IdP can rotate its signing key without a redeploy —
+ * public key and the IdP can rotate its signing key without a redeploy:
  * `createRemoteJWKSet` re-fetches and caches the key set by `kid`.
  *
  * The HS256 path in session.ts is the right one when you issue AND verify the token

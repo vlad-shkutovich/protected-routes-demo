@@ -13,7 +13,7 @@ const DOCUMENT_ID = /^[a-z0-9_-]+$/u;
  * than a readable URL, but anyone who has seen the page can POST to it directly,
  * with any arguments they like, and the proxy's matcher may not even cover the
  * route it was invoked from. Both the session check and the argument validation
- * therefore belong HERE, on the first lines — not in the proxy, not in the caller.
+ * therefore belong HERE, on the first lines: not in the proxy, not in the caller.
  */
 export async function requestAccess(formData: FormData) {
   const session = await requireSession();

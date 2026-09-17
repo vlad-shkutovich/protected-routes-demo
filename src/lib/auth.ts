@@ -65,8 +65,8 @@ export function sessionCookie(value: string, maxAge = SESSION_TTL_SECONDS): Sess
 }
 
 /**
- * The auth endpoints are exempt from the proxy matcher — a signed-out user has to
- * reach them — so they carry their own cross-site check. `SameSite=Lax` already
+ * The auth endpoints are exempt from the proxy matcher: a signed-out user has to
+ * reach them, so they carry their own cross-site check. `SameSite=Lax` already
  * blocks a cross-site POST from carrying the cookie, but logout has nothing to
  * lose and login can be used to force a victim into an attacker's session.
  *
@@ -77,7 +77,7 @@ export function assertSameOrigin(request: NextRequest): NextResponse | null {
   const origin = request.headers.get("origin");
 
   // `none` is a direct navigation, `same-origin` a request the page made to itself.
-  // Neither header at all means no browser made this request — curl or a
+  // Neither header at all means no browser made this request: curl or a
   // server-to-server call, with no ambient cookie for an attacker to ride on.
   const trusted =
     site === "same-origin" ||

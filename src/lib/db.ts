@@ -38,7 +38,7 @@ function formatHash(params: ScryptParams, salt: Buffer, derived: Buffer): string
   return `scrypt$${params.N}$${params.r}$${params.p}$${salt.toString("hex")}$${derived.toString("hex")}`;
 }
 
-/** `scrypt$N$r$p$<salt hex>$<key hex>` — the verifier reads the cost out of the record. */
+/** `scrypt$N$r$p$<salt hex>$<key hex>`: the verifier reads the cost out of the record. */
 function parseHash(
   stored: string,
 ): { params: ScryptParams; salt: Buffer; expected: Buffer } | null {
@@ -94,7 +94,7 @@ export async function verifyPassword(password: string, stored: string | null): P
   const record = parseHash(stored ?? DUMMY_HASH);
 
   if (!record) {
-    // A malformed hash is a data bug, not a wrong password — say so in the log.
+    // A malformed hash is a data bug, not a wrong password: say so in the log.
     console.error("[db] stored password hash is malformed");
     return false;
   }
@@ -125,7 +125,7 @@ const SEED_PASSWORD = "password123";
  * The store lives on `globalThis`, not in a module-level `const`.
  *
  * In dev, module state written from a Route Handler turned out not to be visible
- * to a Server Component — a plain module-level Map gave two different in-memory
+ * to a Server Component: a plain module-level Map gave two different in-memory
  * databases and quietly broke the revocation demo (VERIFICATION.md, gotcha 1).
  * `globalThis` is one object per process, so both paths see the same store. It is
  * the same reason every Next.js + Prisma guide caches its client here.
@@ -210,7 +210,7 @@ export async function findUserById(id: string): Promise<User | null> {
 
 /**
  * Used by the dev-only revocation endpoint. Deleting a user does NOT invalidate
- * the JWT they are holding — that is the whole point of the demo.
+ * the JWT they are holding: that is the whole point of the demo.
  */
 export async function deleteUser(id: string): Promise<boolean> {
   await seed();

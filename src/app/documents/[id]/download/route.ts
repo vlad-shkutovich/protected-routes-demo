@@ -23,10 +23,12 @@ export async function GET(
   const doc = await getDocumentForCurrentUser(id);
 
   if (!doc) {
-    // 204, not 403. The click comes from an `<a download>` anchor: the browser
-    // writes whatever body it receives straight to disk under the link's filename,
-    // so a 403 with a JSON or HTML body lands in ~/Downloads as a broken "file".
-    // An empty 204 makes the browser do nothing at all, which is the honest UX.
+    // 204, not 403. The click comes from an `<a download>` anchor: on the client
+    // build this demo is based on, Chrome saved a 403 body to disk as the "file"
+    // itself, while in Chromium 149 a non-2xx response instead cancels the
+    // download, so the user sees nothing either way. A 204 with no body is
+    // correct under both behaviours, and it also hides whether the document
+    // exists, because "no such document" and "not allowed" both answer 204.
     return new NextResponse(null, { status: 204 });
   }
 

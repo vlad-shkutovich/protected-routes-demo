@@ -30,7 +30,7 @@ function readPositiveInt(name: string, fallback: number): number {
 
   const parsed = Number.parseInt(raw, 10);
 
-  // A NaN TTL produces a token with an invalid `exp` and a cookie with no Max-Age —
+  // A NaN TTL produces a token with an invalid `exp` and a cookie with no Max-Age:
   // a silently broken session rather than a loud misconfiguration. Fail at boot.
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}.`);
@@ -138,7 +138,7 @@ export type VerifiedSession = {
 
 /**
  * Verifies a compact JWS and returns the narrowed session, or throws `SessionError`.
- * Every caller treats a throw as "no session" — there is no path that keeps going
+ * Every caller treats a throw as "no session": there is no path that keeps going
  * with an unverified token.
  */
 export async function verifySession(token: string): Promise<VerifiedSession> {

@@ -44,7 +44,7 @@ function toDocumentDto(doc: Document): DocumentDto {
  * looked up exactly once.
  */
 export const getSession = cache(async (): Promise<SessionUser | null> => {
-  // `cookies()` is async in Next.js 15+ — awaiting it is not optional.
+  // `cookies()` is async in Next.js 15+: awaiting it is not optional.
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
 
@@ -71,7 +71,7 @@ export const getSession = cache(async (): Promise<SessionUser | null> => {
   const user = await findUserById(sub);
 
   if (!user) {
-    console.warn(`[dal] valid token for unknown user ${sub} — treating as signed out`);
+    console.warn(`[dal] valid token for unknown user ${sub}, treating as signed out`);
     return null;
   }
 
@@ -116,7 +116,7 @@ export async function getDocumentsForCurrentUser(): Promise<DocumentDto[]> {
   return all.filter((doc) => canAccess(session.role, doc.requiredRole)).map(toDocumentDto);
 }
 
-/** Returns null both for "no such document" and "not allowed" — don't leak existence. */
+/** Returns null both for "no such document" and "not allowed": don't leak existence. */
 export async function getDocumentForCurrentUser(id: string): Promise<Document | null> {
   const session = await getSession();
 

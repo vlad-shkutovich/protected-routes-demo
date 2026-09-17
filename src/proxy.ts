@@ -15,7 +15,7 @@ import type { VerifiedSession } from "@/lib/session";
 /**
  * Next.js 16's renamed middleware. An OPTIMISTIC check and nothing more: it bounces
  * obviously signed-out traffic before it reaches a render, so the login redirect is
- * fast and cheap. It is NOT the authorization boundary — it only ever sees the
+ * fast and cheap. It is NOT the authorization boundary: it only ever sees the
  * token, never the store, so it cannot know that an account was deleted or a role
  * revoked a second ago. Every page, route handler and Server Action re-checks
  * through the DAL (src/lib/dal.ts); that is the authority.
@@ -34,15 +34,15 @@ export async function proxy(request: NextRequest) {
   try {
     session = await verifySession(token);
   } catch (error) {
-    // Fail closed. Any verification failure — expired, tampered, wrong issuer,
-    // wrong algorithm — ends the request; it never falls through to the page.
+    // Fail closed. Any verification failure (expired, tampered, wrong issuer,
+    // wrong algorithm) ends the request; it never falls through to the page.
     const reason =
       error instanceof SessionError ? error.reason : `unexpected error: ${String(error)}`;
 
     return reject(request, isApiRequest, reason);
   }
 
-  // The token verified — that is ALL this proves. The account behind `sub` may have
+  // The token verified: that is ALL this proves. The account behind `sub` may have
   // been deleted a second ago, and the `role` claim is a hint for the UI, never the
   // basis of a decision; the DAL reads the real role from the store on every call.
   console.info(`[proxy] ${pathname} passed the optimistic check for ${session.payload.sub}`);
@@ -52,7 +52,7 @@ export async function proxy(request: NextRequest) {
   // Sliding session: someone who is actively browsing should not be logged out
   // mid-session, so a token close to expiry is re-issued on a request they never
   // notice. `authTime` rides along unchanged, which is what stops the slide from
-  // being infinite — past authTime + MAX_SESSION_SECONDS, `shouldRefresh` says no
+  // being infinite: past authTime + MAX_SESSION_SECONDS, `shouldRefresh` says no
   // and the session runs out. The re-issue still cannot notice a revoked account;
   // the DAL refuses those requests anyway, so the longer token buys nothing.
   if (shouldRefresh(session)) {
@@ -81,7 +81,7 @@ function reject(request: NextRequest, isApiRequest: boolean, reason: string) {
  * The matcher must be a literal that Next.js can read at BUILD time: it is compiled
  * into the routing manifest and evaluated by the router before any of this module's
  * code runs. A value built from a variable, an env var or a helper call is not
- * statically analysable and is silently ignored — the proxy then either runs on
+ * statically analysable and is silently ignored, so the proxy then either runs on
  * every request or on none, with no error to tell you which.
  *
  * Inverted match: everything except Next's own assets, anything with a file
